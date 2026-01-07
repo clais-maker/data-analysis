@@ -1,0 +1,356 @@
+---
+title: "Rescorla Wagner Model TFM"
+author: "Clara Isabel González Matellán"
+date: "2026-01-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(lme4)
+library(broom)
+```
+
+```{r}
+# Rutas de salida
+out_rw <- "resultados/rescorla_wagner"
+if (!dir.exists(out_rw)) dir.create(out_rw, recursive = TRUE)
+```
+
+```{r}
+# Cargar datos
+df <- read_csv(
+  "C:/Users/Clara/OneDrive - Universidade da Coruña/Escritorio/TFM MODELADO/ArchivosExp03TVClara_SIN_TFG/EXP03_TV_datos_Rescorla_Wagner.csv"
+)
+
+glimpse(df)
+```
+
+```{r}
+# Dataset para Rescorla–Wagner
+# Ensayos completados
+# Aprendizaje continuo (sin reset por bloque)
+df_rl <- df %>%
+  filter(ensayo_completado == 1) %>%
+  mutate(
+    chose = !is.na(respuesta_elegida),
+    choice_opt = as.integer(chose & (respuesta_elegida == opcion_optima)),
+    reward = as.integer(replace_na(reward_yn, 0) == 1)
+  ) %>%
+  arrange(rat_id_lab, session_true, trial)
+```
+
+```{r}
+# Likelihood Rescorla–Wagner
+# - α: tasa de aprendizaje
+# - β: consistencia / explotación
+# - Reversals inferidos por error
+
+negll_rw <- function(par, data) {
+
+  alpha <- par[1]
+  beta  <- par[2]
+
+  Vopt <- 0.5
+  Vno  <- 0.5
+  ll <- 0
+
+  for (i in seq_len(nrow(data))) {
+
+    if (!data$chose[i]) next
+
+    copt <- data$choice_opt[i]
+    r    <- data$reward[i]
+
+    p_opt <- plogis(beta * (Vopt - Vno))
+
+    if (copt == 1) {
+      ll <- ll + log(p_opt + 1e-12)
+      Vopt <- Vopt + alpha * (r - Vopt)
+    } else {
+      ll <- ll + log(1 - p_opt + 1e-12)
+      Vno <- Vno + alpha * (r - Vno)
+    }
+  }
+
+  -ll
+}
+```
+
+```{r}
+# Ajuste por rata + multi-start
+fit_one_rat_rw <- function(d, n_starts = 8) {
+
+  best <- NULL
+
+  for (s in seq_len(n_starts)) {
+
+    par0 <- c(
+      alpha = runif(1, 0.05, 0.8),
+      beta  = runif(1, 0.5, 10)
+    )
+
+    fit <- optim(
+      par = par0,
+      fn = negll_rw,
+      data = d,
+      method = "L-BFGS-B",
+      lower = c(0.001, 0.001),
+      upper = c(1.0, 30)
+    )
+
+    if (is.null(best) || fit$value < best$value) best <- fit
+  }
+
+  tibble(
+    alpha = best$par[1],
+    beta  = best$par[2],
+    negLL = best$value,
+    n_trials = nrow(d)
+  )
+}
+```
+
+```{r}
+# Ajuste del modelo a todas las ratas
+fits_rw <- df_rl %>%
+  group_by(rat_id_lab, group) %>%
+  group_modify(~ fit_one_rat_rw(.x, n_starts = 8)) %>%
+  ungroup()
+
+# Resumen de parámetros
+summary(fits_rw$alpha)
+summary(fits_rw$beta)
+```
+
+```{r}
+# Tabla completa de resultados RW
+fits_rw %>%
+  arrange(group, rat_id_lab) %>%
+  select(
+    rat_id_lab,
+    group,
+    alpha,
+    beta,
+    negLL,
+    n_trials
+  )
+```
+
+```{r}
+# Tabla resumen por grupo
+fits_rw %>%
+  group_by(group) %>%
+  summarise(
+    n = n(),
+    mean_alpha   = mean(alpha),
+    median_alpha = median(alpha),
+    sd_alpha     = sd(alpha),
+    mean_beta    = mean(beta),
+    median_beta  = median(beta),
+    sd_beta      = sd(beta),
+    .groups = "drop"
+  )
+```
+
+```{r}
+# Parámetro beta por grupo
+
+ggplot(fits_rw, aes(x = group, y = beta, color = group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.4) +
+  geom_jitter(width = 0.1, size = 2) +
+  labs(
+    x = "Grupo",
+    y = expression(beta),
+    title = "Consistencia de elección (β)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+```{r}
+# Exportar boxplot
+p_beta <- ggplot(fits_rw, aes(x = group, y = beta, color = group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.4) +
+  geom_jitter(width = 0.1, size = 2) +
+  labs(x = "Grupo", y = expression(beta), title = "Consistencia de elección (β)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggsave(
+  filename = file.path(out_rw, "RW_beta_por_grupo.png"),
+  plot = p_beta,
+  width = 6, height = 4, dpi = 300
+)
+```
+
+```{r}
+# Comparación parámetro beta entre grupos (no paramétrico; n pequeño)
+wilcox_beta <- wilcox.test(beta ~ group, data = fits_rw, exact = FALSE)
+wilcox_beta
+```
+```{r}
+# Tamaño del efecto
+library(rstatix)
+
+eff_beta <- fits_rw %>% wilcox_effsize(beta ~ group)
+eff_beta
+```
+
+```{r}
+# Descriptivos
+fits_rw %>%
+  group_by(group) %>%
+  summarise(
+    n = n(),
+    mean_beta = mean(beta),
+    median_beta = median(beta),
+    sd_beta = sd(beta),
+    .groups = "drop"
+  )
+```
+
+```{r}
+# Exportar 
+write_csv(eff_beta, file.path(out_rw, "RW_beta_wilcox_effsize.csv"))
+```
+
+## Rescorla con perseverancia
+
+```{r}
+# Likelihood Rescorla–Wagner + perseverancia
+# ρ: sesgo a repetir la elección previa
+
+negll_rw_persev <- function(par, data) {
+
+  alpha <- par[1]
+  beta  <- par[2]
+  rho   <- par[3]
+
+  Vopt <- 0.5
+  Vno  <- 0.5
+  ll <- 0
+  prev_choice <- NA_integer_
+
+  for (i in seq_len(nrow(data))) {
+
+    if (!data$chose[i]) next
+
+    copt <- data$choice_opt[i]
+    r    <- data$reward[i]
+
+    stick <- if (is.na(prev_choice)) 0 else if (prev_choice == copt) 1 else -1
+    p_opt <- plogis(beta * (Vopt - Vno) + rho * stick)
+
+    if (copt == 1) {
+      ll <- ll + log(p_opt + 1e-12)
+      Vopt <- Vopt + alpha * (r - Vopt)
+    } else {
+      ll <- ll + log(1 - p_opt + 1e-12)
+      Vno <- Vno + alpha * (r - Vno)
+    }
+
+    prev_choice <- copt
+  }
+
+  -ll
+}
+```
+
+```{r}
+# Ajuste por rata + multistart
+fit_one_rat_rw_persev <- function(d, n_starts = 8) {
+
+  best <- NULL
+
+  for (s in seq_len(n_starts)) {
+
+    par0 <- c(
+      alpha = runif(1, 0.05, 0.8),
+      beta  = runif(1, 0.5, 10),
+      rho   = runif(1, -2, 2)
+    )
+
+    fit <- optim(
+      par = par0,
+      fn = negll_rw_persev,
+      data = d,
+      method = "L-BFGS-B",
+      lower = c(0.001, 0.001, -10),
+      upper = c(1.0, 30, 10)
+    )
+
+    if (is.null(best) || fit$value < best$value) best <- fit
+  }
+
+  tibble(
+    alpha = best$par[1],
+    beta  = best$par[2],
+    rho   = best$par[3],
+    negLL = best$value,
+    n_trials = nrow(d)
+  )
+}
+```
+
+```{r}
+# Ajuste todas las ratas
+fits_rw_persev <- df_rl %>%
+  group_by(rat_id_lab, group) %>%
+  group_modify(~ fit_one_rat_rw_persev(.x, n_starts = 8)) %>%
+  ungroup()
+
+summary(fits_rw_persev$rho)
+```
+```{r}
+# Comparación AIC con el modelo principal 
+cmp_rw <- fits_rw %>%
+  select(rat_id_lab, group, negLL_simple = negLL) %>%
+  left_join(
+    fits_rw_persev %>%
+      select(rat_id_lab, negLL_persev = negLL),
+    by = "rat_id_lab"
+  ) %>%
+  mutate(
+    AIC_simple = 2*2 + 2*negLL_simple,
+    AIC_persev = 2*3 + 2*negLL_persev,
+    dAIC = AIC_persev - AIC_simple
+  )
+
+summary(cmp_rw$dAIC)
+mean(cmp_rw$dAIC < -2)
+```
+
+```{r}
+# Comparación de rho entre grupos
+wilcox.test(rho ~ group, data = fits_rw_persev, exact = FALSE)
+
+library(rstatix)
+fits_rw_persev %>% wilcox_effsize(rho ~ group)
+
+# Descriptivos
+fits_rw_persev %>%
+  group_by(group) %>%
+  summarise(
+    n = n(),
+    mean_rho = mean(rho),
+    median_rho = median(rho),
+    sd_rho = sd(rho),
+    .groups = "drop"
+  )
+```
+
+
+```{r}
+# Comparación ratio α−/α+
+fits_rw_asym <- fits_rw_asym %>%
+  mutate(alpha_ratio = alpha_neg / (alpha_pos + 1e-9))
+
+wilcox.test(alpha_ratio ~ group, data = fits_rw_asym, exact = FALSE)
+fits_rw_asym %>% wilcox_effsize(alpha_ratio ~ group)
+```
+

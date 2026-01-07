@@ -1,0 +1,548 @@
+---
+title: "Curado TFM DE 0"
+author: "Clara Isabel González Matellán"
+date: "2025-11-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Intro explicativa 
+
+En este documento se realiza el proceso de preparación y curado de datos obtenidos e formato `.mat`. 
+Cada archivo está nombrado de la siguiente manera 'EXP03_08-Sep-2025_TV_Sex-F_Gru-AL_Cub-01_Rat-01_Ses-01_Blo-01_Caj-01.mat'
+Donde: 
+
+- EXP03: número de experimento. 
+- 08-Sep-2025: fecha. 
+- TV: tarea de comportamiento utilizada (TV:tarea basada en el valor). 
+- Sex-F: Sexo (Female).
+- Gru-AL: Grupo AL / CE (AL; ad libitum, CE; con esfuerzo cognitivo).
+- Cub-01: Número de Cubeta.
+- Rat-01: Identificador de condición 01= AL, 02 = a CE. 
+- Ses-01: número de sesión. 
+- Blo-01: si existe diferentes partes del archivo.
+- Caj-01: caja de conducta en la que realiza la tarea (o1-06).
+
+La caja de conducta va rotando de manera diaria con el fin de detectar posibles fallos. 
+
+A cada rata se le genera un identificador único de tal manera que las 12 ratas estarían con un ID que no va del 1 al 12 sino que engloba la cubeta y la condición experimental: 
+
+Cub1_AL 
+Cub1_CE
+
+Cub2_AL
+Cub2_CE
+
+Cub3_AL
+Cub3_CE
+
+Cub4_AL
+Cub4_CE
+
+Cub5_AL
+Cub5_CE
+
+Cub6_AL
+Cub6_CE
+
+Como las sesiones generadas no corresponden con los nombres de los archivos, con un fin organizativo se opta por añadir un código de tres dígitos al inicio del nombre: 
+001- EXP03_08-Sep-2025_TV_Sex-F_Gru-AL_Cub-01_Rat-01_Ses-01_Blo-01_Caj-01.mat
+
+Cada rata debe de tener un total de 30 sesiones y los datos deben estar balanceados entre ambas condiciones experimentales (AL-CE)
+
+
+
+# Comprobación de datos 
+
+```{r}
+# Librerias 
+library(tidyverse)   # para manipular y ordenar datos
+library(readr)       # para guardar y leer csv
+library(stringr)     # para trabajar con nombres de archivos
+library(R.matlab)    # para leer archivos .mat
+library(lubridate)   # para manejar fechas
+```
+
+```{r}
+# Ruta de datos absoluta CAMBIAR A RELATIVA
+data_dir <- "C:/Users/Clara/OneDrive - Universidade da Coruña/Escritorio/TFM MODELADO/ArchivosExp03TVClara_SIN_TFG"
+
+# Listar todos los archivos .mat 
+files <- list.files(data_dir, pattern = "\\.mat$", full.names = TRUE)
+
+# Comprobar la estructura de los datos 
+head(files)
+length(files)
+```
+
+*Archivos que se esperan* Se espera que se abran un total de 360 archivos en total. Que correspondería a 12 ratas por 30 sesiones. 
+
+Cada archivo corresponde a una sesión de una rata. Sesión es equivalente a un día de trabajo. (Trabajan de lunes a viernes). 
+
+El número confirma que la importación inicial de datos crudos es correcta. 
+
+*Archivos devueltos* 
+Hay un total de 363. Más adelante comprobaré por qué. 
+
+## Comprobación de la estructura de los archivos. 
+
+```{r}
+# Muestra aleatoria de 3 archivos
+muestra <- sample(files, min(3, length(files)))
+
+# Comprobamos apertura y variables
+res <- lapply(muestra, function(f) {
+  ok <- TRUE; vars <- NULL; err <- NULL
+  tryCatch({
+    dat  <- readMat(f)
+    vars <- names(dat)
+  }, error = function(e) { ok <<- FALSE; err <<- conditionMessage(e) })
+  list(file = f, ok = ok, vars = vars, error = err)
+})
+
+res
+```
+
+
+```{r}
+# Definición estructura de tags que conforman el nombre del archivo  (para validar la composicion del nombre).
+get_tag <- function(x, key, pat = "[^_]+") {
+  m <- stringr::str_match(x, paste0("(^|_)", key, "-?(", pat, ")"))
+  m[,3]
+}
+
+manifest <- tibble(file = files) %>%
+  mutate(
+    file_name   = basename(file),
+    ord     = str_match(file_name, "^(\\d{3})-")[,2] %>% as.integer(),
+    exp     = str_match(file_name, "^\\d{3}-([A-Za-z0-9]+)_")[,2],
+    date_s  = str_match(file_name, "_(\\d{2}-[A-Za-z]{3}-\\d{4})_")[,2],
+    task    = str_match(file_name, "_([A-Za-z]+)_Sex-")[,2],
+    sex     = get_tag(file_name, "Sex", "[MF]"),
+    group   = get_tag(file_name, "Gru"),
+    cubeta  = get_tag(file_name, "Cub", "\\d+") %>% as.integer(),
+    rat     = get_tag(file_name, "Rat", "\\d+") %>% as.integer(),
+    ses_raw = get_tag(file_name, "Ses", "\\d+") %>% as.integer(), # Sesión original sin modificación 
+    block   = get_tag(file_name, "Blo", "\\d+") %>% as.integer(),
+    box     = get_tag(file_name, "Caj", "\\d+") %>% as.integer(),
+    date    = parse_date_time(date_s, orders = "d-b-Y", locale = "C"),
+    parsed_ok = !is.na(date) & !is.na(rat) & !is.na(ses_raw)
+  ) %>%
+  arrange(rat, date, block)
+```
+
+```{r}
+# Defino un identificador único por rata (ID)
+manifest <- manifest %>%
+  mutate(
+    rat_id_lab = paste0("Cub", cubeta, "-", group)
+  )
+
+# Compruebo que el identificador es correcto
+manifest %>%
+  select(cubeta, group, rat_id_lab) %>%
+  distinct() %>%
+  arrange(cubeta, group)
+
+manifest %>%
+  count(cubeta, group) %>%
+  arrange(cubeta, group)
+
+# Muestro la tablas de validacion de id y sesion
+manifest %>% select(file_name, rat_id_lab) %>% head(10)
+```
+Como hubo un fallo que hay que solucionar a la hora de numerar las sesiones, se colocó un numero delante del archivo en función del número de archivo generado. 
+Como tenemos 12 ratas, cada 12 sería una sesión. 
+
+El número de tres dígitos al inicio del nombre de cada archivo (ord) no corresponde a la sesión de cada rata individualmente, sino a una numeración global de 360 archivos. Cada bloque consecutivo de 12 archivos representa la misma sesión para las 12 ratas (6 AL y 6 CE). Por tanto, se derivó una nueva variable ses_true que asigna la sesión real a partir de este patrón.
+
+```{r}
+# añadir la sesión correcta derivada del orden 001..002..003
+manifest <- manifest %>%
+  mutate(session_true = 1 + (ord - 1L) %/% 12L)
+```
+
+```{r}
+# Tabla de rango de archivos que corresponde a cada sesión 
+tabla_sesiones <- tibble(
+  session_true = 1:30,
+  ord_desde = ((1:30 - 1) * 12) + 1,
+  ord_hasta = (1:30) * 12
+)
+
+tabla_sesiones
+```
+
+## Comprobaciones
+
+```{r}
+# Comprobación: número total de archivos
+nrow(manifest)
+```
+
+```{r}
+# Comprobación: equilibrio entre grupos
+manifest %>%
+  count(group)
+```
+
+
+```{r}
+# Comprobación: número de archivos por sesión
+conteo_sesiones <- manifest %>%
+  count(session_true) %>%
+  arrange(session_true)
+
+conteo_sesiones
+
+# Filtrar sesiones que no tengan 12 archivos
+sesiones_sin12 <- conteo_sesiones %>%
+  filter(n != 12)
+
+sesiones_sin12
+```
+
+```{r}
+# ¿Por cada sesión hay 6 AL y 6 CE?
+
+# Cuenta por sesión y grupo
+manifest %>% count(session_true, group) %>% arrange(session_true, group)
+
+# Filtrar sesiones que no tienen 6/6
+ses_6_6 <- manifest %>%
+  count(session_true, group) %>%
+  tidyr::pivot_wider(names_from = group, values_from = n, values_fill = 0) %>%
+  filter(AL != 6 | CE != 6)
+ses_6_6
+```
+
+```{r}
+# Comprobación: número de archivos por rata
+conteo_ratas <- manifest %>%
+  count(rat_id_lab) %>%
+  arrange(rat_id_lab)
+
+conteo_ratas
+
+# Filtrar ratas que no tengan 30 archivos 
+ratas_sin30 <- conteo_ratas %>%
+  filter(n != 30)
+
+ratas_sin30
+```
+
+```{r}
+# Comprobación: valores faltantes en columnas clave
+manifest %>%
+  summarise(across(c(cubeta, group, rat_id_lab, session_true), ~sum(is.na(.))))
+```
+
+```{r}
+# Duplicados 
+# Archivos con la misma ruta completa 
+duplicados_fisicos_file <- any(duplicated(manifest$file))
+
+# Archivos con el mismo nombre 
+duplicados_fisicos_file_name <- any(duplicated(manifest$file_name))
+
+# Duplicados lógicos (rata + sesión)
+duplicados_logicos <- manifest %>%
+  count(rat_id_lab, session_true) %>%
+  filter(n > 1)
+
+duplicados_fisicos_file
+duplicados_fisicos_file_name
+duplicados_logicos
+```
+
+```{r}
+# Comprobar que la etiquetea "RatXX"  es correcta
+# Regla AL=01 CE=02
+mapeo_ok <- manifest %>%
+  mutate(expect_rat = dplyr::case_when(
+    group == "AL" ~ 1L,
+    group == "CE" ~ 2L,
+    TRUE ~ NA_integer_
+  )) %>%
+  mutate(ok = rat == expect_rat)
+
+rompen_regla <- mapeo_ok %>%
+  filter(!ok) %>%
+  select(file_name, cubeta, group, rat, expect_rat, session_true, ses_raw, ord)
+
+rompen_regla
+```
+
+Siempre se debe cumplir que: 
+
+- AL = 01
+- CE = 02 
+
+Si no se cumple es porque ha habido un error a la hora de nombrar el documento. En este caso nos devuelve que el archivo "283-EXP03_10-Oct-2025_TV_Sex-F_Gru-CE_Cub-01_Rat-01_Ses-25_Blo-01_Caj-01.mat" contiene un error de escritura. 
+
+
+
+### Resultado 
+Se verificó la integridad de los archivos: cada rata presenta 30 sesiones, cada sesión contiene 12 archivos (6 AL y 6 CE), no se detectaron valores perdidos ni duplicados, y el total de archivos coincide con el esperado.
+
+
+## Lectura de archivos .mat 
+
+```{r}
+# Listar todos los archivos del experimento
+files <- list.files(data_dir, pattern = "\\.mat$", full.names = TRUE)
+# Comprobar que existen las rutas 
+sum(!file.exists(files))
+```
+
+```{r}
+# Comprobar la estructura interna 
+# Muestra aleatoria de 3 archivos 
+muestra <- sample(files, min(3, length(files)))
+
+# Ver la estructura interna
+res <- lapply(muestra, function(f) {
+  ok <- TRUE; vars <- NULL; err <- NULL
+  tryCatch({
+    dat  <- readMat(f)
+    vars <- names(dat)
+  }, error = function(e) { ok <<- FALSE; err <- conditionMessage(e) })
+  list(file = f, ok = ok, vars = vars, error = err)
+})
+
+res
+```
+
+```{r}
+# Leer un archivo .mat y devolver un tibble ensayo × ensayo
+parse_one_mat <- function(path) {
+  dat <- R.matlab::readMat(path)
+
+  # Mapeo: nombres de las variables del .mat -> nombres limpios
+  name_map <- list(
+    bloque             = c("bloque.fEnsayo", "bloque_fEnsayo"),
+    respuesta_elegida  = c("respuestaElegida.fEnsayo", "respuestaElegida_fEnsayo"),
+    resultado           = c("resultado.fEnsayo", "resultado_fEnsayo"),
+    latencia_inicio     = c("latenciaInicioEnsayo.fEnsayo", "latenciaInicioEnsayo_fEnsayo"),
+    ensayo_completado   = c("ensayoCompletado.fEnsayo", "ensayoCompletado_fEnsayo"),
+    opcion_optima       = c("opcionOptima.fEnsayo", "opcionOptima_fEnsayo"),
+    reward_yn         = c("RW.fEnsayo", "RW_fEnsayo") 
+  )
+
+  # Localiza el nombre real para cada campo
+  pick_name <- function(candidates) {
+    hit <- candidates[candidates %in% names(dat)]
+    if (length(hit) == 0) NA_character_ else hit[1]
+  }
+  real_names <- lapply(name_map, pick_name)
+
+  # Tamaño de ensayo = máximo largo de las variables presentes
+  lens <- vapply(real_names, function(nm) {
+    if (is.na(nm)) 0L else length(dat[[nm]])
+  }, integer(1))
+  n <- if (length(lens)) max(lens) else 0L
+  if (n == 0L) return(tibble(trial = integer(0)))
+
+  # Helper: extrae vector del tamaño n y añade  (not a number) si no existe
+getv <- function(nm) {
+  if (is.na(nm)) return(rep(NA, n))
+  v <- as.vector(dat[[nm]])
+  len <- length(v)
+
+  if (len == n) {
+    v                      # longitudes iguales → perfecto
+  } else if (len < n) {
+    c(v, rep(NA, n - len)) # si falta 1 (último aborto), rellenamos con NA al final
+  } else {                 # len > n, por si acaso
+    v[1:n]                 # recortamos
+  }
+}
+
+  # Crear tabla final
+  tibble(
+    trial             = seq_len(n),
+    bloque            = getv(real_names$bloque),
+    respuesta_elegida = getv(real_names$respuesta_elegida),
+    resultado         = getv(real_names$resultado),
+    latencia_inicio   = getv(real_names$latencia_inicio),
+    ensayo_completado = getv(real_names$ensayo_completado),
+    opcion_optima     = getv(real_names$opcion_optima),
+    reward_yn         = getv(real_names$reward_yn)
+  )
+}
+
+# Comprobación de la tabla 
+test <- parse_one_mat(files[1])
+head(test)
+test %>% slice(100:105)
+```
+## Genero el data frame 
+
+```{r}
+# Unir todos los archivos .mat en un solo dataframe
+df_all <- purrr::map2_dfr(
+  manifest$file, seq_len(nrow(manifest)),
+  function(f, i) {
+    beh <- parse_one_mat(f)
+    if (nrow(beh) == 0) return(NULL)  # si el archivo está vacío, lo salta
+    meta <- manifest[i, c("file_name","rat_id_lab","cubeta","group","sex","task",
+                          "session_true","ses_raw","ord","date"), drop = FALSE]
+    dplyr::bind_cols(meta[rep(1, nrow(beh)), ], beh)
+  }
+)
+
+# Sexo F/M
+df_all <- df_all %>%
+  mutate(
+    sex = dplyr::case_when(
+      stringr::str_detect(file_name, "Sex-?F") ~ "F",
+      stringr::str_detect(file_name, "Sex-?M") ~ "M",
+      TRUE ~ as.character(sex)
+    )
+  )
+df_all %>% count(sex)
+
+# Ordenar columnas para dejarlo limpio
+df_all <- df_all %>%
+  relocate(file_name, rat_id_lab, cubeta, group, sex, task,
+           session_true, ses_raw, ord, date, trial)
+```
+
+
+```{r}
+dim(df_all)
+head(df_all, 5)
+```
+
+```{r}
+# Comprobaciones de carga 
+# Ensayos por sesión (rata × día)
+df_all %>%
+  count(rat_id_lab, session_true) %>%
+  arrange(rat_id_lab, session_true)
+```
+
+```{r}
+# Ensayos por rata 
+df_all %>%
+  count(rat_id_lab) %>%
+  arrange(rat_id_lab)
+```
+
+
+```{r}
+# COmprobar que no hay Na
+df_all %>%
+  summarise(across(c(rat_id_lab, session_true, trial), ~sum(is.na(.))))
+```
+
+```{r}
+df_all %>%
+  summarise(
+    total = n(),
+    completados = sum(ensayo_completado == 1, na.rm = TRUE),
+    porcentaje = 100 * completados / total
+  )
+```
+```{r}
+# Sesiones sin reward
+df_all %>%
+  group_by(file_name) %>%
+  summarise(
+    n = n(),
+    n_reward_na = sum(is.na(reward_yn))
+  )
+```
+
+```{r}
+# Guardar el dataset 
+readr::write_csv(df_all, "EXP03_TV_datos_comportamiento.csv")
+```
+
+```{r}
+# Cargar el CSV
+df_check <- readr::read_csv(
+  "EXP03_TV_datos_comportamiento.csv",
+  col_types = readr::cols(sex = readr::col_character())
+)
+dplyr::count(df_check, sex)
+# Ver las primeras filas
+View(df_check)
+head(df_check, 20)
+```
+## CSV para rescorla Wagner 
+
+### Comprobaciones 
+
+```{r}
+# Mirar el número de ensayos en cual recibió reward 
+df_all %>%
+  group_by(file_name) %>%
+  summarise(
+    n_ensayos = n(),
+    n_reward = sum(!is.na(reward_yn)),
+    tiene_reward = n_reward > 0
+  )
+```
+```{r}
+# Listar archivos sin ningún reward
+df_all %>%
+  group_by(file_name) %>%
+  summarise(n_reward = sum(!is.na(reward_yn))) %>%
+  filter(n_reward == 0)
+```
+
+```{r}
+#De esos archivos porque no hubo agua (fallo de software o conducta de la rata) --HACER LO MISMO PERO RECORRIENDO LA TABLA PARA QEU SEA DINAMICO
+diagnostico <- df_all %>%
+  filter(file_name %in% c(
+    "001-EXP03_08-Sep-2025_TV_Sex-F_Gru-AL_Cub-01_Rat-01_Ses-01_Blo-01_Caj-01.mat",
+    "009-EXP03_08-Sep-2025_TV_Sex-F_Gru-CE_Cub-03_Rat-02_Ses-01_Blo-01_Caj-06.mat",
+    "033-EXP03_10-Sep-2025_TV_Sex-F_Gru-CE_Cub-03_Rat-02_Ses-03_Blo-01_Caj-02.mat"
+  )) %>%
+  group_by(file_name) %>%
+  summarise(
+    n = n(),
+    
+    completados = sum(ensayo_completado == 1, na.rm=TRUE),
+    pct_completados = completados / n * 100,
+
+    # respuestas correctas o incorrectas, pero respuesta al fin
+    con_respuesta = sum(respuesta_elegida %in% c(1,2), na.rm=TRUE),
+    pct_respuesta = con_respuesta / n * 100,
+
+    # abortos
+    abortos_no_inicio = sum(resultado == -5, na.rm=TRUE),
+    otros_abortos     = sum(resultado %in% c(0,-1,-2,-3,-4), na.rm=TRUE),
+
+    pct_abortos_no_inicio = abortos_no_inicio / n * 100,
+    pct_otros_abortos = otros_abortos / n * 100,
+
+    # señal de integridad del archivo
+    tiene_latencia = sum(!is.na(latencia_inicio)),
+    todas_respuesta_na = all(is.na(respuesta_elegida)),
+    toda_latencia_na = all(is.na(latencia_inicio)),
+    todo_resultado_igual = length(unique(na.omit(resultado))) <= 1
+  )
+
+diagnostico
+```
+Lo que vemos tiene sentido ya que de un total de 162 la rata solo completó 1 ensayo de un total de 165 sólo completó un ensayo y de 188 sólo completó 2 ensayos. COmo la respuesta es probabilística encaja perfectamente que no haya recibido recompensa.
+
+
+
+```{r}
+# Guardar CSV para RW
+readr::write_csv(df_all, "EXP03_TV_datos_Rescorla_Wagner.csv")
+```
+
+```{r}
+df_rescorla <- readr::read_csv("EXP03_TV_datos_Rescorla_Wagner.csv")
+```
+```{r}
+df_rescorla %>% dplyr::slice(1:20)
+```
+

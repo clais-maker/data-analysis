@@ -1,0 +1,2194 @@
+---
+title: "02_analitica_reversal_learning"
+author: "Clara Isabel González Matellán"
+date: "2026-01-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+dir.create("figures", showWarnings = FALSE)
+```
+
+# ÍNDICE 
+
+# Análisis de datos
+
+## 1. Análisis exploratorio global
+
+### 1.1 Estructura del experimento
+- Número de animales por grupo (AL, CE)
+- Número total de sesiones
+- Organización temporal de las sesiones (días y semanas)
+- Número de ensayos por sesión
+
+### 1.2 Descriptivos generales
+- Ensayos totales, completados y abortos
+- Distribución general de las variables conductuales
+- Variabilidad interindividual
+
+### 1.3 Evolución temporal sesión a sesión (EDA)
+- Proporción de elecciones correctas por sesión
+- Proporción de ensayos completados por sesión
+- Proporción de abortos por sesión
+- Latencias por sesión
+- Representación separada por grupo (AL vs CE)
+
+### 1.4 Evolución temporal agrupada por semana (EDA descriptivo)
+- Variables representadas como medias semanales
+- Comparación visual entre grupos
+- Este análisis se utiliza exclusivamente para facilitar la visualización de tendencias temporales y no como análisis inferencial
+
+### 1.5 Definición de variables derivadas
+- Definición del criterio de aprendizaje
+- Cálculo de los ensayos hasta criterio por animal (y/o por bloque)
+- Uso de esta variable en análisis posteriores
+
+### 1.6 Análisis multivariante exploratorio (PCA)
+- Variables incluidas (resumen por animal):
+  - Proporción media de correctos
+  - Proporción media de abortos
+  - Proporción media de ensayos completados
+  - Latencia media (transformada si procede)
+  - Ensayos hasta criterio
+- Nivel de agregación: por animal
+- Variables centradas y estandarizadas
+- Interpretación exploratoria de componentes principales
+- El PCA se utiliza únicamente con fines exploratorios
+
+---
+
+## 2. Definición de la fase de adquisición (steady state)
+
+### 2.1 Definición operativa del steady state
+- Variable utilizada: proporción de elecciones correctas
+- Cálculo individual por animal
+- Criterio de estabilización del rendimiento
+- Justificación neuroconductual
+
+### 2.2 Distribución del steady state
+- Sesión media de llegada al steady state por grupo
+- Variabilidad interindividual
+- Representación descriptiva
+
+---
+
+## 3. Aprendizaje de la contingencia
+
+### 3.1 Elección óptima (proporción de correctos)
+
+#### 3.1.1 EDA específico
+- Curvas de aprendizaje por sesión
+- Diferencias descriptivas entre grupos
+- Forma de la variable y justificación del tipo de modelo
+
+#### 3.1.2 Modelo estadístico (análisis principal)
+- Modelo mixto longitudinal sesión a sesión
+- Efectos fijos: grupo, sesión, interacción grupo × sesión
+- Efecto aleatorio: animal
+
+#### 3.1.3 Diagnóstico del modelo
+- Convergencia
+- Adecuación de residuos
+- Comprobaciones específicas del modelo
+
+#### 3.1.4 Resultados
+- Efecto de sesión (aprendizaje)
+- Diferencias globales entre grupos
+- Interacción grupo × sesión
+
+#### 3.1.5 Análisis en fase de adquisición (steady state)
+- Definición objetiva del steady state por animal
+- Truncamiento de los datos hasta la sesión de steady state
+- Modelo mixto aplicado únicamente a la fase de aprendizaje
+- Comparación entre grupos durante la adquisición
+
+---
+
+## 4. Ejecución de la tarea
+
+### 4.1 Proporción de ensayos completados
+
+#### 4.1.1 EDA específico
+- Evolución temporal por sesión
+- Diferencias descriptivas entre grupos
+
+#### 4.1.2 Modelo estadístico
+- Modelo mixto sesión a sesión
+- Efectos fijos: grupo, sesión, interacción
+- Efecto aleatorio: animal
+
+#### 4.1.3 Diagnóstico del modelo
+
+#### 4.1.4 Resultados
+
+#### 4.1.5 Análisis en fase de adquisición (steady state)
+
+
+---
+
+## 5. Errores de ejecución
+
+### 5.1 Proporción total de abortos
+
+#### 5.1.1 EDA específico
+- Evolución temporal por sesión
+- Diferencias descriptivas entre grupos
+
+#### 5.1.2 Modelo estadístico
+- Modelo mixto sesión a sesión
+- Efectos fijos: grupo, sesión, interacción
+- Efecto aleatorio: animal
+
+#### 5.1.3 Diagnóstico del modelo
+
+#### 5.1.4 Resultados
+
+### 5.2 Distribución de tipos de aborto (análisis complementario)
+- Análisis descriptivo de la proporción de cada tipo
+- Comparación visual entre grupos
+- Sin inferencia formal salvo hipótesis específica
+
+---
+
+## 6. Bloques 
+
+### 6.1 Latencias
+
+#### 6.1.1 EDA específico
+- Distribución de latencias
+- Evolución temporal por sesión
+- Diferencias descriptivas entre grupos
+
+---
+
+```{r}
+# Librerías necesarias
+library(tidyverse)   # Manipulación y visualización de datos
+library(lme4)        # Modelos mixtos
+library(performance) # Sobredispersión
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(stringr)
+library(readr)
+library(ggplot2)
+library(lme4)
+library(broom.mixed)
+library(ggeffects)
+```
+
+```{r}
+# Cargar datos 
+df <- read_csv("EXP03_TV_datos_comportamiento.csv")
+```
+
+```{r}
+# Columnas clave esperadas
+df %>% select(group, rat_id_lab, session_true) %>% glimpse()
+```
+```{r}
+dplyr::glimpse(df)
+```
+
+## 1. Análisis exploratorio global
+
+### 1.1 Estructura del experimento
+- Número de animales por grupo (AL, CE)
+
+```{r}
+# Número de animales
+# Número total de animales
+n_animals_total <- df %>%
+  distinct(rat_id_lab) %>%
+  nrow()
+
+n_animals_total
+
+
+# Número de animales por grupo
+n_animals_by_group <- df %>%
+  distinct(group, rat_id_lab) %>%
+  count(group, name = "n_animals")
+
+n_animals_by_group
+
+
+# Comprobación de integridad:
+# verificar que cada animal pertenece a un único grupo
+animals_in_multiple_groups <- df %>%
+  distinct(rat_id_lab, group) %>%
+  count(rat_id_lab, name = "n_groups") %>%
+  filter(n_groups > 1)
+
+animals_in_multiple_groups
+```
+
+```{r}
+# Número total de sesiones
+# Número total de sesiones (IDs únicos)
+n_sessions_total <- df %>%
+  distinct(session_true) %>%
+  nrow()
+
+n_sessions_total
+
+# Listado ordenado de sesiones 
+sessions_list <- df %>%
+  distinct(session_true) %>%
+  arrange(session_true)
+
+sessions_list
+```
+
+```{r}
+# Sesiones por animal (Balance)
+sessions_per_animal <- df %>%
+  distinct(rat_id_lab, session_true) %>%
+  count(rat_id_lab, name = "n_sessions")
+
+sessions_per_animal
+summary(sessions_per_animal$n_sessions)
+
+# Sesiones por grupo (control del diseño)
+sessions_per_group <- df %>%
+  distinct(group, rat_id_lab, session_true) %>%
+  count(group, name = "n_sessions")
+
+sessions_per_group
+```
+```{r}
+# Número de ensayos por sesión
+trials_per_session <- df %>%
+  count(session_true, name = "n_trials") %>%  # cada fila = ensayo
+  arrange(session_true)
+
+trials_per_session
+summary(trials_per_session$n_trials)
+
+# Ensayos por sesión y grupo (control descriptivo)
+trials_per_session_group <- df %>%
+  count(group, session_true, name = "n_trials") %>%
+  arrange(group, session_true)
+
+trials_per_session_group
+
+# Ensayos por sesión y animal (balance individual)
+trials_per_session_animal <- df %>%
+  count(rat_id_lab, session_true, name = "n_trials") %>%
+  arrange(rat_id_lab, session_true)
+
+trials_per_session_animal
+summary(trials_per_session_animal$n_trials)
+```
+
+```{r}
+#Organización temporal de las sesiones (días y semanas)
+#Crear la variable week
+#NOTA: La variable 'week' se utiliza únicamente con fines descriptivos y de visualización.
+#Los análisis inferenciales se utilizan a nivel de sesión. 
+
+#Cada 5 sesiones corresponde a una semana experimental 
+df <- df %>%
+  mutate(
+    week = ((session_true - 1) %/% 5) + 1
+  )
+# Comprobación de sesiones por semana
+sessions_per_week <- df %>%
+  distinct(session_true, week) %>%
+  count(week, name = "n_sessions")
+
+sessions_per_week
+
+#Relación sesión - semana
+session_week_map <- df %>%
+  distinct(session_true, week) %>%
+  arrange(session_true)
+
+session_week_map
+```
+
+### 1.2 Descriptivos generales
+
+```{r}
+#Total de ensayos 
+n_trials_total <- nrow(df)
+n_trials_total
+
+# Ensayos completados
+# 0= ensayo abortado, 1 = ensayo completado 
+
+# Ensayos completados y abortados a nivel global
+trials_completion_global <- df %>%
+  count(ensayo_completado, name = "n_trials") %>%
+  mutate(prop = n_trials / sum(n_trials))
+
+trials_completion_global
+
+# Ensayos completados y abortados por grupo (AL / CE)
+completion_by_group <- df %>%
+  count(group, ensayo_completado, name = "n_trials") %>%
+  group_by(group) %>%
+  mutate(prop = n_trials / sum(n_trials)) %>%
+  ungroup()
+
+completion_by_group
+```
+
+- Distribución general de las variables conductuales
+
+```{r}
+# Distribución global de ensayos correctos
+correct_global <- df %>%
+  count(opcion_optima, name = "n_trials") %>%
+  mutate(prop = n_trials / sum(n_trials))
+
+correct_global
+
+# Distribución de ensayos correctos por grupo
+correct_by_group <- df %>%
+  count(group, opcion_optima, name = "n_trials") %>%
+  group_by(group) %>%
+  mutate(prop = n_trials / sum(n_trials)) %>%
+  ungroup()
+
+correct_by_group
+```
+
+```{r}
+# Abortos y tipos  
+# Distribución global de abortos 
+#Completados (1) Abortados (0)
+abort_global <- df %>%
+  count(ensayo_completado, name = "n_trials") %>%
+  mutate(prop = n_trials / sum(n_trials))
+
+abort_global
+
+# Proporción de abortos por grupo
+abort_by_group <- df %>%
+  count(group, ensayo_completado, name = "n_trials") %>%
+  group_by(group) %>%
+  mutate(prop = n_trials / sum(n_trials)) %>%
+  ungroup()
+
+abort_by_group
+
+# Tipos de aborto según 'resultado' 
+abort_types_global <- df %>%
+  filter(ensayo_completado == 0) %>%
+  count(resultado, name = "n_trials") %>%
+  mutate(prop = n_trials / sum(n_trials))
+
+abort_types_global
+
+# Tipos de aborto por grupo
+abort_types_by_group <- df %>%
+  filter(ensayo_completado == 0) %>%
+  count(group, resultado, name = "n_trials") %>%
+  group_by(group) %>%
+  mutate(prop = n_trials / sum(n_trials)) %>%
+  ungroup()
+
+abort_types_by_group
+```
+
+```{r}
+# Resumen numérico 
+latency_summary <- df %>%
+  summarise(
+    n_valid = sum(!is.na(latencia_inicio)),
+    mean_latency = mean(latencia_inicio, na.rm = TRUE),
+    median_latency = median(latencia_inicio, na.rm = TRUE),
+    sd_latency = sd(latencia_inicio, na.rm = TRUE)
+  )
+
+latency_summary
+
+# Histogrma global 
+
+ggplot(df, aes(x = latencia_inicio)) +
+  geom_histogram(bins = 40, na.rm = TRUE) +
+  labs(
+    x = "Latency (s)",
+    y = "Count",
+    title = "Distribution of response latencies"
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+# Resumen por grupo de latencias de inicio
+latency_by_group <- df %>%
+  group_by(group) %>%
+  summarise(
+    n_latency_valid = sum(!is.na(latencia_inicio)),
+    mean_latency = mean(latencia_inicio, na.rm = TRUE),
+    median_latency = median(latencia_inicio, na.rm = TRUE),
+    sd_latency = sd(latencia_inicio, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+latency_by_group
+
+# Histograma por grupo 
+ggplot(df, aes(x = latencia_inicio)) +
+  geom_histogram(bins = 40, na.rm = TRUE) +
+  facet_wrap(~ group) +
+  labs(
+    x = "Latency (s)",
+    y = "Count",
+    title = "Distribution of response latencies by group"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# 1.2.3 Variabilidad interindividual
+# Proporción de ensayos correctos por animal
+correct_by_rat <- df %>%
+  group_by(rat_id_lab, group) %>%
+  summarise(
+    n_trials = n(),
+    n_optimal = sum(opcion_optima == 1, na.rm = TRUE),
+    prop_optimal = n_optimal / n_trials
+  ) %>%
+  ungroup()
+
+#Boxplot de variabilidad interindividual 
+ggplot(correct_by_rat, aes(x = group, y = prop_optimal)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.5) +
+  geom_jitter(width = 0.1, alpha = 0.7) +
+  labs(
+    x = "Group",
+    y = "Proportion of correct choices",
+    title = "Inter-individual variability in task performance"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Latencia media por animal 
+latency_by_rat <- df %>%
+  group_by(rat_id_lab, group) %>%
+  summarise(
+    mean_latency = mean(latencia_inicio, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+
+#Boxplot de variabilidad interindividual 
+ggplot(latency_by_rat, aes(x = group, y = mean_latency)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.5) +
+  geom_jitter(width = 0.1, alpha = 0.7) +
+  labs(
+    x = "Group",
+    y = "Mean latency (s)",
+    title = "Inter-individual variability in response latency"
+  ) +
+  theme_minimal()
+```
+
+### 1.3 Evolución temporal sesión a sesión (EDA)
+
+```{r}
+# Proporción de elecciones correctas por sesión 
+ds_optimal_session <- df %>%
+  mutate(
+    is_completed = ensayo_completado == 1,
+    is_optimal   = ensayo_completado == 1 & respuesta_elegida == opcion_optima
+  ) %>%
+  group_by(group, session_true) %>%
+  summarise(
+    n_optimal   = sum(is_optimal, na.rm = TRUE),
+    n_completed = sum(is_completed, na.rm = TRUE),
+    prop_optimal = if_else(n_completed > 0,
+                           n_optimal / n_completed,
+                           NA_real_),
+    .groups = "drop"
+  )
+
+#Boxplot elecciones correctas por sesión 
+ggplot(ds_optimal_session,
+       aes(x = session_true, y = prop_optimal, color = group)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    x = "Session",
+    y = "Proportion of correct choices",
+    title = "Learning curve: correct choices per session"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Propoción de ensayos completados 
+completion_by_session <- df %>%
+  group_by(group, session_true) %>%
+  summarise(
+    n_completed = sum(ensayo_completado == 1, na.rm = TRUE),
+    n_abort = sum(ensayo_completado == 0, na.rm = TRUE),
+    prop_completed = n_completed / (n_completed + n_abort)
+  ) %>%
+  ungroup()
+
+#Boxplot elecciones correctas por sesión 
+ggplot(completion_by_session,
+       aes(x = session_true, y = prop_completed, color = group)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    x = "Session",
+    y = "Proportion of completed trials",
+    title = "Task completion across sessions"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Propoción de abortos por sesión 
+abort_by_session <- df %>%
+  group_by(group, session_true) %>%
+  summarise(
+    prop_abort = mean(ensayo_completado == 0, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+#Boxplot abortos por sesión
+ggplot(abort_by_session,
+       aes(x = session_true, y = prop_abort, color = group)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    x = "Session",
+    y = "Proportion of aborted trials",
+    title = "Abort rate across sessions"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Propoción de latencia por sesión
+latency_by_session <- df %>%
+  filter(!is.na(latencia_inicio)) %>%
+  group_by(group, session_true) %>%
+  summarise(
+    mean_latency = mean(latencia_inicio)
+  ) %>%
+  ungroup()
+
+#Boxplot latencia por sesión
+ggplot(latency_by_session,
+       aes(x = session_true, y = mean_latency, color = group)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    x = "Session",
+    y = "Mean latency (s)",
+    title = "Response latency across sessions"
+  ) +
+  theme_minimal()
+```
+
+### 1.4 Evolución temporal agrupada por semana (EDA descriptivo)
+
+
+- Variables representadas como medias semanales
+- Comparación visual entre grupos
+- Este análisis se utiliza exclusivamente para facilitar la visualización de tendencias temporales y no como análisis inferencial
+
+
+```{r}
+# Ensayos completados por semana
+completion_by_week <- df %>%
+  group_by(group, week) %>%
+  summarise(
+    n_completed = sum(ensayo_completado == 1, na.rm = TRUE),
+    n_abort = sum(ensayo_completado == 0, na.rm = TRUE),
+    prop_completed = n_completed / (n_completed + n_abort)
+  ) %>%
+  ungroup()
+
+# Proporción de ensayos completados por semana 
+ggplot(completion_by_week,
+       aes(x = week, y = prop_completed, color = group)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    x = "Week",
+    y = "Proportion of completed trials",
+    title = "Task completion across weeks"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Elecciones correctas por semana
+correct_by_week <- df %>%
+  group_by(group, week) %>%
+  summarise(
+    n_optimal = sum(opcion_optima == 1, na.rm = TRUE),
+    n_abort = sum(ensayo_completado == 0, na.rm = TRUE),
+    prop_optimal = n_optimal / (n_optimal + n_abort)
+  ) %>%
+  ungroup()
+
+# Gráfico de elecciones correctas por semana 
+ggplot(correct_by_week,
+       aes(x = week, y = prop_optimal, color = group)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    x = "Week",
+    y = "Proportion of correct choices",
+    title = "Learning curve across weeks"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Proporción de abortos por semana 
+abort_by_week <- df %>%
+  group_by(group, week) %>%
+  summarise(
+    prop_abort = mean(ensayo_completado == 0, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Gráfico de latencias por semana
+ggplot(abort_by_week,
+       aes(x = week, y = prop_abort, color = group)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    x = "Week",
+    y = "Proportion of aborted trials",
+    title = "Abort rate across weeks"
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+# Proporción de latencias por semana 
+latency_by_week <- df %>%
+  filter(ensayo_completado == 1, !is.na(latencia_inicio)) %>%
+  group_by(group, week) %>%
+  summarise(
+    mean_latency = mean(latencia_inicio)
+  ) %>%
+  ungroup()
+
+# Gráfico de latencias por semana 
+ggplot(latency_by_week,
+       aes(x = week, y = mean_latency, color = group)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    x = "Week",
+    y = "Mean latency (s)",
+    title = "Response latency across weeks"
+  ) +
+  theme_minimal()
+```
+
+
+### 1.5 Definición de variables derivadas
+- Definición del criterio de aprendizaje
+- Cálculo de los ensayos hasta criterio por animal (y/o por bloque)
+- Uso de esta variable en análisis posteriores
+chose óptimal 
+
+```{r}
+# Chose optimal 
+df <- df %>%
+  mutate(
+    chose_optimal = as.integer(
+      ensayo_completado == 1 & respuesta_elegida == opcion_optima
+    )
+  )
+```
+
+
+blocks_completed
+Block_size
+
+
+```{r}
+session_learning_metrics <- df %>%
+  group_by(rat_id_lab, group, session_true) %>%
+  summarise(
+    completed_trials = sum(ensayo_completado == 1, na.rm = TRUE),
+    blocks_completed= n_distinct(bloque) - 1,
+    block_size = ifelse(
+      blocks_completed> 0,
+      completed_trials / blocks_completed,
+      NA_real_
+    ),
+    .groups = "drop"
+  )
+```
+
+```{r}
+# Media global por grupo 
+session_learning_metrics %>%
+  group_by(group) %>%
+  summarise(
+    mean_block_completed = mean(block_size, na.rm = TRUE),
+    sd_block_completed   = sd(block_size, na.rm = TRUE),
+    n_sessions           = sum(!is.na(block_size)),
+    .groups = "drop"
+  )
+```
+
+```{r}
+summary_group <- session_learning_metrics %>%
+  group_by(group, session_true) %>%
+  summarise(
+    mean_block_size = mean(block_size, na.rm = TRUE),
+    sem_block_size  = sd(block_size, na.rm = TRUE) /
+                      sqrt(sum(!is.na(block_size))),
+    .groups = "drop"
+  )
+
+ggplot(summary_group,
+       aes(x = session_true, y = mean_block_size, colour = group)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_errorbar(
+    aes(ymin = mean_block_size - sem_block_size,
+        ymax = mean_block_size + sem_block_size),
+    width = 0.3
+  ) +
+  labs(
+    x = "Session",
+    y = "Block size (completed trials / completed blocks)",
+    colour = "Group",
+    title = "Block size decreases across sessions"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+
+# 1) Métrica: total trials / completed blocks (por rata y sesión)
+session_learning_totals <- df %>%
+  group_by(rat_id_lab, group, session_true) %>%
+  summarise(
+    total_trials     = n(),
+    blocks_completed= n_distinct(bloque) - 1,
+    block_size_total = ifelse(
+      blocks_completed> 0,
+      total_trials / blocks_completed,
+      NA_real_
+    ),
+    .groups = "drop"
+  )
+
+# 2) Media ± SEM por grupo y sesión
+summary_total <- session_learning_totals %>%
+  group_by(group, session_true) %>%
+  summarise(
+    mean_block_size = mean(block_size_total, na.rm = TRUE),
+    sem_block_size  = sd(block_size_total, na.rm = TRUE) /
+                      sqrt(sum(!is.na(block_size_total))),
+    .groups = "drop"
+  )
+
+# 3) Gráfica
+ggplot(summary_total,
+       aes(x = session_true, y = mean_block_size, colour = group)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  geom_errorbar(
+    aes(ymin = mean_block_size - sem_block_size,
+        ymax = mean_block_size + sem_block_size),
+    width = 0.3
+  ) +
+  labs(
+    x = "Session",
+    y = "Block size (total trials / completed blocks)",
+    colour = "Group",
+    title = "Block size using total trials"
+  ) +
+  theme_minimal()
+```
+
+### 1.6 Análisis multivariante exploratorio (PCA)
+```{r}
+session_block_summary <- session_learning_metrics %>%
+  select(rat_id_lab, group, session_true, trials_per_block_session = block_size)
+```
+
+
+```{r}
+# Generar el dataset por animal 
+pca_data <- df %>%
+  group_by(rat_id_lab, group) %>%
+  summarise(
+    n_optimal = sum(chose_optimal == 1, na.rm = TRUE),
+    n_abort   = sum(ensayo_completado == 0, na.rm = TRUE),
+    prop_optimal = n_optimal / (n_optimal + n_abort),
+    prop_abort     = mean(ensayo_completado == 0, na.rm = TRUE),
+    prop_completed = mean(ensayo_completado == 1, na.rm = TRUE),
+    mean_latency   = mean(latencia_inicio, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  
+  left_join(
+    session_block_summary %>%
+      group_by(rat_id_lab) %>%
+      summarise(
+        median_trials_per_block = median(trials_per_block_session, na.rm = TRUE),
+        .groups = "drop"
+      ),
+    by = "rat_id_lab"
+  )
+
+
+pca_data
+```
+
+```{r}
+# Transformar la variable latencia a logaritmo 
+pca_data <- pca_data %>%
+  mutate(
+    log_latency = log(mean_latency)
+  )
+```
+
+```{r}
+# Seleccionar las variables del PCA
+pca_vars <- pca_data %>%
+  select(
+    prop_optimal,
+    prop_abort,
+    prop_completed,
+    log_latency,
+    median_trials_per_block
+  )
+```
+
+```{r}
+#Ejecutar PCA centrado y escalado 
+pca_res <- prcomp(
+  pca_vars,
+  center = TRUE,
+  scale. = TRUE
+)
+```
+
+```{r}
+summary(pca_res)
+```
+
+```{r}
+#Cargas de las variables en los componentes principales
+pca_res$rotation
+round(pca_res$rotation, 3)
+```
+
+```{r}
+# Visualizar individuos en el plano PC1-PC2
+library(factoextra)
+
+fviz_pca_ind(
+  pca_res,
+  geom.ind = "point",
+  col.ind = pca_data$group,
+  addEllipses = TRUE,
+  legend.title = "Group"
+)
+```
+
+```{r}
+nrow(pca_data)
+length(unique(pca_data$rat_id_lab))
+```
+
+```{r}
+unique(pca_data$rat_id_lab)
+```
+
+```{r}
+# Visualizar las variables que define cada componente
+fviz_pca_var(pca_res)
+```
+
+---
+
+## 2. Definición de la fase de adquisición (steady state)
+
+### 2.1 Definición operativa del steady state
+- Variable utilizada: proporción de elecciones correctas
+- Cálculo individual por animal
+
+Reglas:
+
+- Descartar sesiones con < 2 bloques
+- Descartar sesión buena seguida de sesión mala: si una sesión tiene ≥ 2 bloques, pero la sesión siguiente cae a < 2 bloques, entonces descartas también la sesión anterior porque no hay rendimiento constante.
+
+#### Cálculo del steady - state como javi 
+
+Reglas:
+
+- Descartar sesiones con < 2 bloques
+- Descartar sesión buena seguida de sesión mala: si una sesión tiene ≥ 2 bloques, pero la sesión siguiente cae a < 2 bloques, entonces descartas también la sesión anterior porque no hay rendimiento constante. 
+
+
+```{r}
+# Tabla por rata x sesión con métricas básicas
+session_learning_table_completed <- df %>%
+  group_by(rat_id_lab, group, session_true) %>%
+  summarise(
+    total_trials     = n(),
+    completed_trials = sum(ensayo_completado == 1, na.rm = TRUE),
+    abort_trials     = sum(ensayo_completado == 0, na.rm = TRUE),
+
+    # Número de bloques completados:
+    # En tus datos, 'bloque' suele contar un bloque iniciado extra, por eso restamos 1.
+    blocks_completed = {
+      b <- n_distinct(bloque[ensayo_completado == 1])
+      b_adj <- b - 1
+      ifelse(is.na(b_adj) | b_adj < 0, 0L, as.integer(b_adj))
+    },
+
+    # Block size = ensayos completados / bloques completados
+    block_size = ifelse(
+      blocks_completed >= 1,
+      completed_trials / blocks_completed,
+      NA_real_
+    ),
+
+    .groups = "drop"
+  ) %>%
+  arrange(group, rat_id_lab, session_true)
+
+# Base (rata, sesión)
+ss0_completed <- session_learning_table_completed %>%
+  select(rat_id_lab, group, session_true, blocks_completed, block_size) %>%
+  arrange(rat_id_lab, session_true)
+```
+
+```{r}
+# Filtrado para el ajuste
+# Regla: mantener sesiones con >=2 bloques completados.
+# Y además: si una sesión es válida pero la siguiente NO lo es, descartamos la válida (criterio de consistencia).
+ss1_completed <- ss0_completed %>%
+  group_by(rat_id_lab) %>%
+  arrange(session_true, .by_group = TRUE) %>%
+  mutate(
+    valid_blocks = blocks_completed >= 2,
+    next_valid   = lead(valid_blocks),
+    keep_for_fit = valid_blocks & (is.na(next_valid) | next_valid)
+  ) %>%
+  ungroup()
+
+# Long con NA donde no entra al ajuste
+steady_state_prism_long_completed <- ss1_completed %>%
+  mutate(block_size_for_prism = if_else(keep_for_fit, block_size, NA_real_)) %>%
+  select(rat_id_lab, group, session_true,
+         blocks_completed, block_size,
+         keep_for_fit, block_size_for_prism)
+```
+
+```{r}
+#CSV prism 
+# CSV wide (Prism): columnas = ratas, filas = sesión
+steady_state_prism_wide_completed <- steady_state_prism_long_completed %>%
+  select(session_true, rat_id_lab, block_size_for_prism) %>%
+  pivot_wider(names_from = rat_id_lab, values_from = block_size_for_prism) %>%
+  arrange(session_true)
+
+write_csv(steady_state_prism_wide_completed, "steady_state_prism_wide_PRUEBA2.csv")
+```
+
+```{r}
+# Lee el "Table of results" exportado por Prism (suele venir con ';' como separador)
+prism_results_raw <- read_delim(
+  "Nonlin fit of steady_state_prism_wide_PRUEBA2decay.csv",
+  delim = ";",
+  col_names = FALSE,
+  show_col_types = FALSE,
+  trim_ws = TRUE
+)
+
+# Convertir a tabla: primera columna = "parameter"
+prism_tbl <- prism_results_raw %>%
+  rename(parameter = X1)
+
+# Por si quieres chequear rápido:
+print(head(prism_tbl$parameter, 30))
+```
+
+
+```{r}
+# ---- 0) Orden real de ratas (el que enviaste a Prism) ----
+rat_order <- steady_state_prism_wide_completed %>%
+  select(-session_true) %>%
+  names()
+
+# ---- 1) Tabla prism_tbl (ya la tienes, pero la rehago robusta) ----
+prism_tbl <- prism_results_raw %>%
+  rename(parameter = X1)
+
+# ---- 2) Encontrar bloque Best-fit values ----
+i_start <- which(prism_tbl$parameter == "Best-fit values")[1]
+i_end   <- which(str_detect(prism_tbl$parameter, "^95% CI"))[1]
+
+if (is.na(i_start) || is.na(i_end) || i_end <= i_start) {
+  stop("No se encontró el bloque 'Best-fit values' o '95% CI' en el CSV de Prism. Revisa el export.")
+}
+
+prism_bestfit_block <- prism_tbl %>%
+  slice((i_start + 1):(i_end - 1))
+
+# ---- 3) Columnas de Prism que representan ratas (aunque se llamen X2, X3...) ----
+rat_cols_prism <- setdiff(names(prism_bestfit_block), "parameter")
+
+# Seguridad: número de columnas de ratas debe coincidir con rat_order
+if (length(rat_cols_prism) != length(rat_order)) {
+  stop(paste0(
+    "No coincide el número de ratas: Prism tiene ",
+    length(rat_cols_prism),
+    " columnas y el wide original tiene ",
+    length(rat_order),
+    ". Revisa si Prism exportó columnas extra o si el wide cambió."
+  ))
+}
+
+# ---- 4) Extraer parámetros y mapear a rat_id_lab real por orden ----
+keep_params <- c("Y0", "Plateau", "K")
+
+prism_final2 <- prism_bestfit_block %>%
+  filter(parameter %in% keep_params) %>%
+  pivot_longer(
+    cols = all_of(rat_cols_prism),
+    names_to = "rat_col_prism",
+    values_to = "value"
+  ) %>%
+  mutate(
+    # Mapear X2/X3/... -> Cub1-AL/Cub1-CE/... según el orden del wide
+    rat_id_lab = rat_order[match(rat_col_prism, rat_cols_prism)],
+    value = str_replace_all(value, ",", "."),
+    value = as.numeric(value)
+  ) %>%
+  select(-rat_col_prism) %>%
+  pivot_wider(
+    names_from = parameter,
+    values_from = value
+  ) %>%
+  rename(
+    YM = Plateau,
+    k  = K
+  ) %>%
+  left_join(
+    df %>% select(rat_id_lab, group) %>% distinct(),
+    by = "rat_id_lab"
+  )
+
+prism_final2
+```
+
+```{r}
+# Umbral (criterio del paper): YM + 10% (equivalente a YM * 1.10)
+prism_thresholds <- prism_final2 %>%
+  mutate(threshold = YM * 1.10) %>%
+  select(rat_id_lab, group, YM, threshold)
+
+# Steady session: primera sesión con block_size_for_prism <= threshold
+steady_state_absoluto <- steady_state_prism_long_completed %>%
+  filter(is.finite(block_size_for_prism)) %>%
+  left_join(
+    prism_thresholds %>% select(rat_id_lab, group, threshold),
+    by = c("rat_id_lab", "group")
+  ) %>%
+  group_by(rat_id_lab, group) %>%
+  arrange(session_true, .by_group = TRUE) %>%
+  summarise(
+    threshold = first(threshold),
+    steady_session = {
+      hits <- session_true[block_size_for_prism <= threshold]
+      if (length(hits) > 0) min(hits) else max(session_true)
+    },
+    .groups = "drop"
+  )
+
+steady_state_absoluto
+```
+```{r}
+MAX_SESSION <- 30
+
+steady_state_absoluto <- steady_state_absoluto %>%
+  rename(steady_session_abs = steady_session) %>%     # <- CLAVE
+  mutate(
+    steady_session_abs = if_else(is.na(steady_session_abs), MAX_SESSION, steady_session_abs),
+    steady_session_abs = pmin(steady_session_abs, MAX_SESSION),
+    reached_steady = steady_session_abs < MAX_SESSION
+  )
+```
+
+
+```{r}
+# Datos observados usados para el fit
+plot_df <- steady_state_prism_long_completed %>%
+  filter(is.finite(block_size_for_prism)) %>%
+  transmute(rat_id_lab, session_true, block_size = block_size_for_prism) %>%
+  arrange(rat_id_lab, session_true)
+
+# Curva predicha usando parámetros de Prism
+pred_df <- prism_final2 %>%
+  select(rat_id_lab, Y0, YM, k) %>%
+  inner_join(
+    plot_df %>%
+      group_by(rat_id_lab) %>%
+      summarise(
+        xmin = min(session_true),
+        xmax = max(session_true),
+        .groups = "drop"
+      ),
+    by = "rat_id_lab"
+  ) %>%
+  mutate(
+    session_true = map2(xmin, xmax, ~ seq(.x, .y, by = 0.1))
+  ) %>%
+  unnest(session_true) %>%
+  mutate(
+    block_size = YM + (Y0 - YM) * exp(-k * session_true)
+  )
+
+ggplot() +
+  geom_point(data = plot_df, aes(session_true, block_size), size = 1) +
+  geom_line(data = pred_df, aes(session_true, block_size), linewidth = 1) +
+  geom_vline(
+    data = steady_state_absoluto,
+    aes(xintercept = steady_session_abs),
+    color = "red", linetype = 2, linewidth = 0.7
+  ) +
+  facet_wrap(~ rat_id_lab, scales = "free_y") +
+  labs(
+    x = "Session",
+    y = "Mean trials per block",
+    title = "Learning curves per rat and onset of steady-state (YM + 10%)"
+  ) +
+  theme_bw()
+```
+
+```{r}
+ggplot(steady_state_absoluto, aes(x = group, y = steady_session_abs)) +
+  geom_boxplot(width = 0.5, outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.08, size = 2, alpha = 0.9) +
+  labs(
+    x = "Group",
+    y = "Session at steady-state",
+    title = "Session at steady-state by group"
+  ) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+```
+
+```{r}
+summary_by_group <- steady_state_absoluto %>%
+  group_by(group) %>%
+  summarise(
+    n_rats = n(),
+    median_steady_session = median(steady_session_abs, na.rm = TRUE),
+    IQR_steady_session    = IQR(steady_session_abs, na.rm = TRUE),
+    mean_steady_session   = mean(steady_session_abs, na.rm = TRUE),
+    sd_steady_session     = sd(steady_session_abs, na.rm = TRUE),
+    min_steady_session    = min(steady_session_abs, na.rm = TRUE),
+    max_steady_session    = max(steady_session_abs, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+summary_by_group
+```
+
+### 2.2 Distribución del steady state
+
+
+
+### 2.3 Generar dataset 0-Steady - State
+```{r}
+MAX_SESSION <- 30
+
+steady_state_absoluto %>%
+  count(group, reached_steady = steady_session_abs < MAX_SESSION)
+```
+
+```{r}
+steady_state_absoluto <- steady_state_absoluto %>%
+  mutate(
+    steady_session_abs = if_else(
+      is.na(steady_session_abs),
+      MAX_SESSION,
+      steady_session_abs
+    ),
+    steady_session_abs = pmin(steady_session_abs, MAX_SESSION)
+  )
+```
+
+```{r}
+
+steady_state_absoluto <- steady_state_absoluto %>%
+  mutate(
+    reached_steady = steady_session_abs < MAX_SESSION
+  )
+# ¿Quiénes no llegan?
+rats_no_steady <- steady_state_absoluto %>%
+  filter(!reached_steady) %>%
+  select(rat_id_lab, group, steady_session_abs, threshold)
+
+rats_no_steady
+```
+
+```{r}
+# A) Dataset con TODAS las ratas (incluye las que no llegan, con 30)
+steady_all <- steady_state_absoluto
+
+# B) Dataset SOLO con ratas que sí alcanzan steady (excluye steady=30)
+steady_reached <- steady_state_absoluto %>%
+  filter(reached_steady)
+```
+
+---
+
+## 3. Ejecución de la tarea
+
+### 3.1 Proporción de ensayos completados
+
+#### 3.1.1 EDA específico
+- Evolución temporal por sesión
+- Diferencias descriptivas entre grupos
+
+```{r}
+# Crear dataset por sesión
+ds_completed_session <- df %>%
+  group_by(rat_id_lab, group, session_true) %>%
+  summarise(
+    n_completed = sum(ensayo_completado == 1, na.rm = TRUE),
+    n_abort     = sum(ensayo_completado == 0, na.rm = TRUE),
+    prop_completed = n_completed / (n_completed + n_abort),
+    .groups = "drop"
+  ) %>%
+  filter((n_completed + n_abort) > 0)
+```
+
+```{r}
+group_curve_completed <- ds_completed_session %>%
+  group_by(group, session_true) %>%
+  summarise(
+    mean_prop_completed = mean(prop_completed, na.rm = TRUE),
+    sem_prop_completed  = sd(prop_completed, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+```
+
+```{r}
+ggplot(group_curve_completed,
+       aes(x = session_true,
+           y = mean_prop_completed,
+           colour = group,
+           group = group)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  geom_errorbar(
+    aes(
+      ymin = mean_prop_completed - sem_prop_completed,
+      ymax = mean_prop_completed + sem_prop_completed
+    ),
+    width = 0.2,
+    linewidth = 0.6
+  ) +
+  scale_colour_manual(
+    values = c("AL" = "#D55E00", "CE" = "#0072B2")
+  ) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, by = 0.2)
+  ) +
+  labs(
+    x = "Sesión",
+    y = "Proporción de ensayos completados",
+    colour = "Grupo"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "top",
+    axis.title = element_text(size = 12),
+    axis.text  = element_text(size = 11)
+  )
+```
+
+
+```{r}
+# Guardar imagen 
+ggsave(
+  filename = "figures/fig_prop_completados.png",
+  width = 5.5,
+  height = 4,
+  units = "in",
+  dpi = 300
+)
+```
+
+```{r}
+# Tabla descriptiva 
+tabla_descriptiva_completed <- ds_completed_session %>%
+  group_by(rat_id_lab, group) %>%
+  summarise(
+    mean_prop_completed = mean(prop_completed, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  group_by(group) %>%
+  summarise(
+    n = n(),
+    mean = mean(mean_prop_completed),
+    sd = sd(mean_prop_completed),
+    median = median(mean_prop_completed),
+    IQR = IQR(mean_prop_completed),
+    .groups = "drop"
+  )
+
+tabla_descriptiva_completed
+```
+```{r}
+# Exportar tabla
+library(knitr)
+library(kableExtra)
+
+tabla_descriptiva_completed %>%
+  kable(
+    caption = "Estadísticos descriptivos de la proporción de ensayos completados",
+    digits = 3,
+    booktabs = TRUE
+  )
+```
+```{r}
+# Exportar tabla
+library(flextable)
+library(officer)
+
+ft_completed <- flextable(tabla_descriptiva_completed) %>%
+  autofit()
+
+doc <- read_docx() %>%
+  body_add_par(
+    "Estadísticos descriptivos de la proporción de ensayos completados",
+    style = "Normal"
+  ) %>%
+  body_add_flextable(ft_completed)
+
+print(doc, target = "tabla_prop_completados.docx")
+```
+
+```{r}
+library(gt)
+
+dir.create("figures", showWarnings = FALSE, recursive = TRUE)
+
+tabla_descriptiva_completed %>%
+  gt() %>%
+  gtsave("figures/tabla_prop_completados.png")
+```
+
+```{r}
+dir.create("results", showWarnings = FALSE, recursive = TRUE)
+
+write.csv(
+  tabla_descriptiva_completed,
+  file = "results/tabla_prop_completados.csv",
+  row.names = FALSE
+)
+```
+
+```{r}
+# guardar tabla reproducible
+dir.create("tables", showWarnings = FALSE, recursive = TRUE)
+print(doc, target = "tables/tabla_prop_completados.docx")
+```
+
+#### 3.1.2 Modelo estadístico
+- Modelo mixto sesión a sesión
+- Efectos fijos: grupo, sesión, interacción
+- Efecto aleatorio: animal
+
+```{r}
+#Preparación del dataset para el modelo de completados
+ds_completed_model <- ds_completed_session %>%
+  mutate(
+    session_c1 = session_true - mean(session_true, na.rm = TRUE), # Centrado a la media
+    obs_id = row_number()
+  )
+```
+
+```{r}
+# Modelo Mixto Base
+m_completed_base <- glmer(
+  cbind(n_completed, n_abort) ~ group * session_c1 +
+    (1 | rat_id_lab),
+  data = ds_completed_model,
+  family = binomial,
+  control = glmerControl(
+    optimizer = "bobyqa",
+    optCtrl = list(maxfun = 2e5)
+  )
+)
+summary (m_completed_base)
+```
+```{r}
+check_overdispersion(m_completed_base)
+```
+
+```{r}
+# Pendiente aleatoria 
+m_completed_rs <- glmer(
+  cbind(n_completed, n_abort) ~ group * session_c1 +
+    (1 + session_c1 | rat_id_lab),
+  data = ds_completed_model,
+  family = binomial,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+)
+```
+
+```{r}
+# Test sobredispersión 
+check_overdispersion(m_completed_rs)
+```
+```{r}
+# Pendiente aleatoria con orle
+m2 <- glmer(
+  cbind(n_completed, n_abort) ~ group * session_c1 +
+    (1 + session_c1 | rat_id_lab) + (1 | obs_id),
+  data = ds_completed_model,
+  family = binomial,
+  control = glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=2e5))
+)
+
+summary(m2)
+```
+
+
+```{r}
+# Test sobredispersión 
+check_overdispersion(m2)
+```
+
+```{r}
+# Modelo con ORLE 
+m_completed_olre <- glmer(
+  cbind(n_completed, n_abort) ~ group * session_c1 +
+    (1 | rat_id_lab) + (1 | obs_id),
+  data = ds_completed_model,
+  family = binomial,
+  control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 2e5))
+)
+
+summary(m_completed_olre)
+```
+
+
+```{r}
+check_overdispersion(m_completed_olre)
+```
+
+```{r}
+# Tamaño del efecto 
+exp(fixef(m_completed_olre)["session_c1"])
+```
+
+#### 3.1.3 Diagnóstico del modelo
+#### 3.1.4 Resultados
+
+```{r}
+library(broom.mixed)
+
+tabla_completed <- tidy(
+  m_completed_olre,
+  effects = "fixed"
+)
+
+tabla_completed
+```
+
+```{r}
+newdat <- expand.grid(
+  group = c("AL", "CE"),
+  session_c1 = c(0, 4, 9, 25, 26, 27 ,28, 29)  # sesiones 1, 5, 10
+)
+```
+
+```{r}
+newdat$logit <- predict(
+  m_completed_olre,
+  newdata = newdat,
+  re.form = NA
+)
+```
+
+```{r}
+newdat$prob <- plogis(newdat$logit) * 100
+```
+
+```{r}
+newdat %>%
+  mutate(
+    session = session_c1 + 1
+  ) %>%
+  select(group, session, prob)
+```
+
+```{r}
+newdat <- expand.grid(
+  group = c("AL", "CE"),
+  session_c1 = seq(
+    min(ds_completed_model$session_c1),
+    max(ds_completed_model$session_c1),
+    by = 1
+  )
+)
+
+newdat$logit <- predict(
+  m_completed_olre,
+  newdata = newdat,
+  re.form = NA
+)
+
+newdat$prob <- plogis(newdat$logit) * 100
+newdat$session <- newdat$session_c1 + 1
+
+ggplot(newdat, aes(x = session, y = prob, colour = group)) +
+  geom_line(linewidth = 1.2) +
+  labs(
+    x = "Sesión",
+    y = "Ensayos completados (%)",
+    colour = "Grupo"
+  ) +
+  theme_bw()
+```
+
+#### 3.1.5 Análisis en fase de adquisición (steady state)
+
+```{r}
+# Unir dataset 
+ds_completed_model2 <- ds_completed_model %>%
+  left_join(
+    steady_state_absoluto %>% select(rat_id_lab, steady_session_abs),
+    by = "rat_id_lab"
+  )
+```
+
+```{r}
+# Filtrar hasta adquisición
+ds_acq <- ds_completed_model2 %>%
+  filter(session_true <= steady_session_abs)
+```
+
+```{r}
+# Modelo mixto binomial: completados hasta steady state con Pendiente aleatoria por rata + ORLE
+m_completed_acq_b <- glmer(
+  cbind(n_completed, n_abort) ~ group * session_c1 +
+    (1 + session_c1 | rat_id_lab) +
+    (1 | obs_id),
+  data = ds_acq,
+  family = binomial,
+  control = glmerControl(
+    optimizer = "bobyqa",
+    optCtrl = list(maxfun = 2e5)
+  )
+)
+
+summary(m_completed_acq_b)
+check_overdispersion(m_completed_acq_b)
+```
+
+```{r}
+# Modelo completados hasta steady - state ORLE
+ds_acq <- ds_acq %>%
+  mutate(
+    session_c1 = session_true - mean(session_true, na.rm = TRUE)
+  )
+
+m_completed_acq <- glmer(
+  cbind(n_completed, n_abort) ~ group * session_c1 +
+    (1 | rat_id_lab) + (1 | obs_id),
+  data = ds_acq,
+  family = binomial,
+  control = glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=2e5))
+)
+
+summary(m_completed_acq)
+check_overdispersion(m_completed_acq)
+```
+
+---
+
+## 3. Aprendizaje de la contingencia
+
+### 3.1 Elección óptima (proporción de correctos)
+
+#### 3.1.1 EDA específico
+
+```{r}
+# Preparación del dataset 
+# Proporción de óptimos = correctos / completados (= correctos / (correctos + incorrectos))
+
+ds_optimal_session <- df %>%
+  mutate(
+    is_completed = ensayo_completado == 1,
+    chose_optimal = as.integer(
+      ensayo_completado == 1 &
+        respuesta_elegida == opcion_optima
+    )
+  ) %>%
+  group_by(rat_id_lab, group, session_true) %>%
+  summarise(
+    n_optimal   = sum(chose_optimal == 1, na.rm = TRUE),
+    n_completed = sum(is_completed, na.rm = TRUE),
+    n_incorrect = n_completed - n_optimal,
+    prop_optimal = if_else(n_completed > 0,
+                           n_optimal / n_completed,
+                           NA_real_),
+    .groups = "drop"
+  ) %>%
+  filter(n_completed > 0) %>%
+  mutate(
+    session_c1 = session_true - mean(session_true, na.rm = TRUE),
+    obs_id = row_number()
+  )
+```
+
+```{r}
+# Curva agregada por grupo × sesión (a partir de ds_optimal_session)
+group_curve <- ds_optimal_session %>%
+  group_by(group, session_true) %>%
+  summarise(
+    mean_prop = mean(prop_optimal, na.rm = TRUE),
+    sem_prop  = sd(prop_optimal, na.rm = TRUE) / sqrt(sum(!is.na(prop_optimal))),
+    .groups = "drop"
+  )
+```
+
+```{r}
+# Plot de la curva
+ggplot(group_curve,
+       aes(x = session_true, y = mean_prop, colour = group, group = group)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = mean_prop - sem_prop, ymax = mean_prop + sem_prop),
+                width = 0.25, alpha = 0.6) +
+  labs(x = "Session", y = "Proportion optimal (optimal / (optimal + no optimal))",
+       colour = "Group") +
+  theme_bw()
+```
+
+
+```{r}
+# Resumen descriptivo global por grupo
+eda_table <- ds_optimal_session %>%
+  group_by(group) %>%
+  summarise(
+    n_rats      = n_distinct(rat_id_lab),
+    n_sessions  = n(),
+    mean_prop   = mean(prop_optimal, na.rm = TRUE),
+    sd_prop     = sd(prop_optimal, na.rm = TRUE),
+    median_prop = median(prop_optimal, na.rm = TRUE),
+    IQR_prop    = IQR(prop_optimal, na.rm = TRUE),
+    min_prop    = min(prop_optimal, na.rm = TRUE),
+    max_prop    = max(prop_optimal, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+eda_table
+```
+
+#### 3.1.2 Modelo estadístico (análisis principal)
+
+```{r}
+# Modelo base
+m_optimal_base <- glmer(
+  cbind(n_optimal, n_incorrect) ~ group * session_c1 +
+    (1 | rat_id_lab),
+  data = ds_optimal_session,
+  family = binomial,
+  control = glmerControl(
+    optimizer = "bobyqa",
+    optCtrl = list(maxfun = 2e5)
+  )
+)
+
+summary(m_optimal_base)
+check_overdispersion(m_optimal_base)
+```
+
+
+```{r}
+# Modelo pendiente aleatoria + orle
+m_optimal_rs_olre <- glmer(
+  cbind(n_optimal, n_incorrect) ~ group * session_c1 +
+    (1 + session_c1 | rat_id_lab) +
+    (1 | obs_id),
+  data = ds_optimal_session,
+  family = binomial,
+  control = glmerControl(
+    optimizer = "bobyqa",
+    optCtrl = list(maxfun = 2e5)
+  )
+)
+
+summary(m_optimal_rs_olre)
+check_overdispersion(m_optimal_rs_olre)
+```
+
+
+
+```{r}
+# Modelo binomial con OLRE
+m_optimal_olre <- glmer(
+  cbind(n_optimal, n_incorrect) ~ group * session_c1 +
+    (1 | rat_id_lab) + (1 | obs_id),
+  data = ds_optimal_session,
+  family = binomial,
+  control = glmerControl(
+    optimizer = "bobyqa",
+    optCtrl = list(maxfun = 2e5)
+  )
+)
+
+summary(m_optimal_olre)
+check_overdispersion(m_optimal_olre)
+```
+
+
+```{r}
+ds_optimal_session <- ds_optimal_session %>%
+  mutate(session_id = factor(session_true))  # global, compartida
+```
+
+
+#### 3.1.3 Diagnóstico del modelo
+- Convergencia
+- Adecuación de residuos
+- Comprobaciones específicas del modelo
+
+```{r}
+# Comparación del modelo
+AIC(m_optimal_olre, m_optimal_rs_olre)
+
+anova(m_optimal_olre, m_optimal_rs_olre, test = "Chisq")
+```
+
+
+#### 3.1.4 Resultados
+
+
+#### 3.1.5 Análisis en fase de adquisición (steady state)
+
+```{r}
+# Añadir steady_session a cada fila del df original
+df_with_steady <- df %>%
+  left_join(
+    steady_all %>%
+      select(rat_id_lab, steady_session_abs),
+    by = "rat_id_lab"
+  )
+
+# Filtrar SOLO adquisición (hasta steady, censura incluida)
+df_acq_all <- df_with_steady %>%
+  filter(session_true <= steady_session_abs)
+```
+
+```{r}
+# Correctos por sesión 
+ds_optimal_acq_all <- df_acq_all %>%
+  mutate(
+    chose_optimal = as.integer(
+      ensayo_completado == 1 & respuesta_elegida == opcion_optima
+    )
+  ) %>%
+  group_by(rat_id_lab, group, session_true) %>%
+  summarise(
+    n_optimal = sum(chose_optimal == 1, na.rm = TRUE),
+    n_abort   = sum(ensayo_completado == 0, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  filter(n_optimal + n_abort > 0) %>%
+  mutate(
+    session_c1 = session_true - 1,
+    session_id = factor(session_true)
+  )
+```
+
+
+
+
+## 5. Errores de ejecución
+
+### 5.1 Proporción total de abortos
+
+```{r}
+# Dataset: Abortos como todo lo NO completado
+ds_abort_session <- df %>%
+  mutate(
+    is_complete = resultado %in% c(1, 2),
+    is_abort    = !is_complete
+  ) %>%
+  group_by(rat_id_lab, group, session_true) %>%
+  summarise(
+    n_completed = sum(is_complete, na.rm = TRUE),
+    n_abort     = sum(is_abort, na.rm = TRUE),
+    prop_complete = n_completed / (n_completed + n_abort),
+    prop_abort    = 1 - prop_complete,
+    .groups = "drop"
+  )
+```
+
+
+#### 5.1.1 EDA específico
+- Evolución temporal por sesión
+
+```{r}
+group_curve_abort <- ds_abort_session %>%
+  group_by(group, session_true) %>%
+  summarise(
+    mean_prop_abort = mean(prop_abort, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+```{r}
+# Gráfico
+ggplot(group_curve_abort,
+       aes(session_true, mean_prop_abort,
+           colour = group, group = group)) +
+  geom_line(linewidth = 1.1) +
+  geom_point(size = 2) +
+  labs(
+    x = "Sesión",
+    y = "Proporción de abortos",
+    colour = "Grupo"
+  ) +
+  theme_bw() +
+  theme(legend.position = "top")
+```
+
+
+#### 5.1.2 Modelo estadístico
+- Modelo mixto sesión a sesión
+- Efectos fijos: grupo, interacción
+- Efecto aleatorio: animal sesion
+
+#### MOdelo centrado a 1 
+```{r}
+# Variable centrada a 1
+ds_abort_session <- ds_abort_session %>%
+  mutate(
+    session_c1 = session_true - 1,
+    session_id = factor(session_true)
+  )
+```
+
+```{r}
+m_abort_c1 <- glmer(
+  cbind(n_abort, n_completed) ~ group * session_c1 +
+    (1 | rat_id_lab) +
+    (1 | session_id),
+  data = ds_abort_session,
+  family = binomial
+)
+
+summary(m_abort_c1)
+```
+
+#### Modelo centrado a la media
+
+```{r}
+# Dataset
+ds_abort_session <- ds_abort_session %>%
+  mutate(
+    session_c  = session_true - mean(session_true),
+    session_id = factor(session_true)
+  )
+```
+
+```{r}
+m_abort <- glmer(
+  cbind(n_abort, n_completed) ~ group * session_c +
+    (1 | rat_id_lab) +
+    (1 | session_id),
+  data = ds_abort_session,
+  family = binomial
+)
+
+summary(m_abort)
+```
+```{r}
+check_overdispersion(m_abort)
+```
+
+#### 5.1.3 Diagnóstico del modelo
+
+#### 5.1.4 Steady state
+
+```{r}
+# Dataset all
+ds_abort_presteady_all <- ds_abort_session %>%
+  left_join(
+    steady_all %>%
+      dplyr::select(rat_id_lab, steady_session_abs),
+    by = "rat_id_lab"
+  ) %>%
+  filter(session_true <= steady_session_abs)
+```
+
+```{r}
+# Dataset abortos steady reached
+ds_abort_presteady_reached <- ds_abort_session %>%
+  left_join(
+    steady_reached %>%
+      dplyr::select(rat_id_lab, steady_session_abs),
+    by = "rat_id_lab"
+  ) %>%
+  filter(session_true <= steady_session_abs)
+```
+
+```{r}
+# Modelo todas
+m_abort_presteady_all <- glmer(
+  cbind(n_abort, n_completed) ~ group * session_c1 +
+    (1 | rat_id_lab) +
+    (1 | session_id),
+  data = ds_abort_presteady_all,
+  family = binomial
+)
+
+summary(m_abort_presteady_all)
+```
+```{r}
+check_overdispersion(m_abort_presteady_all)
+```
+
+### Modelo pre-steady sin sesion aleatorio
+
+```{r}
+m_abort_presteady_all_nosession <- glmer(
+  cbind(n_abort, n_completed) ~ group * session_c1 +
+    (1 | rat_id_lab),
+  data = ds_abort_presteady_all,
+  family = binomial
+)
+
+summary(m_abort_presteady_all_nosession)
+
+check_overdispersion(m_abort_presteady_all_nosession)
+```
+
+
+
+
+```{r}
+# Eliminadas
+m_abort_presteady_reached <- glmer(
+  cbind(n_abort, n_completed) ~ group * session_c1 +
+    (1 | rat_id_lab) +
+    (1 | session_id),
+  data = ds_abort_presteady_reached,
+  family = binomial
+)
+
+summary(m_abort_presteady_reached)
+```
+
+#### 5.1.4 Resultados
+
+### 5.2 Distribución de tipos de aborto (análisis complementario)
+- Análisis descriptivo de la proporción de cada tipo
+- Comparación visual entre grupos
+- Sin inferencia formal salvo hipótesis específica
+
+
+```{r}
+# Tipos de aborto pre -steady 
+abort_type_presteady <- df %>%
+  left_join(
+    steady_all %>%
+      dplyr::select(rat_id_lab, steady_session_abs),
+    by = "rat_id_lab"
+  ) %>%
+  dplyr::filter(
+    resultado <= 0,
+    session_true < steady_session_abs
+  ) %>%
+  dplyr::mutate(
+    abort_type = factor(resultado, levels = c(-5, -4, -3, -2, -1, 0))
+  ) %>%
+  dplyr::group_by(group, abort_type) %>%
+  dplyr::summarise(n = dplyr::n(), .groups = "drop") %>%
+  dplyr::group_by(group) %>%
+  dplyr::mutate(prop = n / sum(n)) %>%
+  dplyr::ungroup()
+```
+
+```{r}
+ggplot(abort_type_presteady,
+       aes(abort_type, prop, fill = group)) +
+  geom_col(position = "dodge") +
+  labs(
+    x = "Tipo de aborto (resultado)",
+    y = "Proporción dentro de los abortos (pre–steady)",
+    fill = "Grupo"
+  ) +
+  theme_bw() +
+  theme(legend.position = "top")
+```
+
+```{r}
+tab_abort_types <- df %>%
+  left_join(
+    steady_all %>% dplyr::select(rat_id_lab, steady_session_abs),
+    by = "rat_id_lab"
+  ) %>%
+  filter(
+    resultado <= 0,
+    session_true < steady_session_abs
+  ) %>%
+  count(group, resultado) %>%
+  tidyr::pivot_wider(
+    names_from = resultado,
+    values_from = n,
+    values_fill = 0
+  )
+
+tab_abort_types
+```
+```{r}
+# ¿El tipo de aborto difiere entre grupos?
+chisq.test(tab_abort_types[,-1])
+```
+
+```{r}
+# Test chi-cuadrado tipos de aborto (pre–steady)
+tab_abort_types$group <- factor(tab_abort_types$group, levels = c("AL", "CE"))
+
+chisq_res <- chisq.test(tab_abort_types[, -1])
+rownames(chisq_res$stdres) <- levels(tab_abort_types$group)
+chisq_res$stdres
+```
+## 6. Bloques
+
+```{r}
+# Dataset bloques 
+ds_blocks_session <- df %>%
+  group_by(rat_id_lab, group, session_true) %>%
+  summarise(
+    n_completed = sum(ensayo_completado == 1, na.rm = TRUE),
+    blocks_completed = max(bloque, na.rm = TRUE) - 1,
+    .groups = "drop"
+  ) %>%
+  filter(blocks_completed > 0) %>%
+  mutate(
+    block_size = n_completed / blocks_completed
+  )
+```
+
+```{r}
+# Eda
+ds_blocks_session %>%
+  group_by(group, session_true) %>%
+  summarise(mean_block_size = mean(block_size), .groups = "drop") %>%
+  ggplot(aes(session_true, mean_block_size, colour = group)) +
+  geom_line() +
+  geom_point() +
+  theme_bw()
+```
+
+```{r}
+# Centrar sesión a la media 
+ds_blocks_session <- ds_blocks_session %>%
+  mutate(session_c = session_true - mean(session_true))
+```
+
+```{r}
+# Modelo
+m_block_size <- lmer(
+  block_size ~ group * session_c + (1 | rat_id_lab),
+  data = ds_blocks_session
+)
+
+summary(m_block_size)
+```
+### Tamaño de bloque con sesión aleatoria 
+
+```{r}
+ds_blocks_session <- ds_blocks_session %>%
+  mutate(
+    session_c  = session_true - mean(session_true),
+    session_id = factor(session_true)
+  )
+```
+
+```{r}
+m_block_size <- lmer(
+  block_size ~ group * session_c +
+    (1 | rat_id_lab) +
+    (1 | session_id),
+  data = ds_blocks_session
+)
+
+summary(m_block_size)
+```
+```{r}
+# Gráfica
+ds_blocks_session %>%
+  group_by(group, session_true) %>%
+  summarise(
+    mean_block_size = mean(block_size),
+    se_block_size   = sd(block_size) / sqrt(n()),
+    .groups = "drop"
+  ) %>%
+  ggplot(aes(session_true, mean_block_size, colour = group)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  geom_errorbar(
+    aes(ymin = mean_block_size - se_block_size,
+        ymax = mean_block_size + se_block_size),
+    width = 0.2
+  ) +
+  labs(
+    x = "Sesión",
+    y = "Tamaño medio de bloque",
+    colour = "Grupo"
+  ) +
+  theme_bw() +
+  theme(legend.position = "top")
+```
+### Número de bloques por sesión 
+
+```{r}
+ds_blocks_n <- ds_blocks_session %>%
+  select(rat_id_lab, group, session_true, blocks_completed)
+```
+
+```{r}
+ds_blocks_n <- ds_blocks_n %>%
+  mutate(
+    session_c  = session_true - mean(session_true),
+    session_id = factor(session_true)
+  )
+```
+
+```{r}
+m_blocks_n <- lmer(
+  blocks_completed ~ group * session_c +
+    (1 | rat_id_lab) +
+    (1 | session_id),
+  data = ds_blocks_n
+)
+
+summary(m_blocks_n)
+```
+
